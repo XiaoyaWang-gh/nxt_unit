@@ -120,3 +120,59 @@ func TestGenerateTestOnSplitFunctionMode(t *testing.T) {
 		return
 	}
 }
+
+func Test_ensureLocalNxtUnitReplace(t *testing.T) {
+	moduleDir := t.TempDir()
+	localRepo := t.TempDir()
+
+	err := os.WriteFile(path.Join(moduleDir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24.2\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldGoDirective := atgconstant.GoDirective
+	atgconstant.GoDirective = "go"
+	t.Cleanup(func() {
+		atgconstant.GoDirective = oldGoDirective
+	})
+
+	oldLocalRepo := os.Getenv("NXT_UNIT_LOCAL_REPO")
+	err = os.Setenv("NXT_UNIT_LOCAL_REPO", localRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if oldLocalRepo == "" {
+			_ = os.Unsetenv("NXT_UNIT_LOCAL_REPO")
+			return
+		}
+		_ = os.Setenv("NXT_UNIT_LOCAL_REPO", oldLocalRepo)
+	})
+
+	err = ensureLocalNxtUnitReplace(moduleDir)
+	assert.NoError(t, err)
+
+	content, err := os.ReadFile(path.Join(moduleDir, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Contains(t, string(content), "replace github.com/bytedance/nxt_unit => "+localRepo)
+	assert.Contains(t, string(content), "golang.org/x/tools v0.37.0")
+}
+
+func Test_findNearestGoModRoot(t *testing.T) {
+	moduleDir := t.TempDir()
+	packageDir := filepath.Join(moduleDir, "pkg", "foo")
+	err := os.MkdirAll(packageDir, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.WriteFile(path.Join(moduleDir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24.2\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := findNearestGoModRoot(packageDir)
+	assert.NoError(t, err)
+	assert.Equal(t, moduleDir, got)
+}

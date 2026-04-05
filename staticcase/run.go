@@ -187,13 +187,83 @@ func ReNameFileToGo(path, oldSuffix, newSuffix string, isTemp bool, shouldPrintL
 	return nil
 }
 
-func FixGoFile(path string) error {
+func findNearestGoModRoot(dir string) (string, error) {
+	current, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		if atghelper.IsFileExist(path.Join(current, "go.mod")) {
+			return current, nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return dir, nil
+		}
+		current = parent
+	}
+}
+
+func ensureLocalNxtUnitReplace(dir string) error {
+	localRepo := strings.TrimSpace(os.Getenv("NXT_UNIT_LOCAL_REPO"))
+	if localRepo == "" {
+		return nil
+	}
+
+	absLocalRepo, err := filepath.Abs(localRepo)
+	if err != nil {
+		return err
+	}
+
 	var stdBuffer, stdErrBuff bytes.Buffer
-	cmd := exec.Command(atgconstant.GoDirective, "mod", "tidy")
-	cmd.Dir = path
+	cmd := exec.Command(
+		atgconstant.GoDirective,
+		"mod",
+		"edit",
+		fmt.Sprintf("-replace=github.com/bytedance/nxt_unit=%s", absLocalRepo),
+	)
+	cmd.Dir = dir
 	cmd.Stdout = &stdBuffer
 	cmd.Stderr = &stdErrBuff
-	err := cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return logextractor.GenSuggestByErrLog(err, stdBuffer.String(), stdErrBuff.String())
+	}
+
+	stdBuffer.Reset()
+	stdErrBuff.Reset()
+	cmd = exec.Command(
+		atgconstant.GoDirective,
+		"mod",
+		"edit",
+		"-require=golang.org/x/tools@v0.37.0",
+	)
+	cmd.Dir = dir
+	cmd.Stdout = &stdBuffer
+	cmd.Stderr = &stdErrBuff
+	if err := cmd.Run(); err != nil {
+		return logextractor.GenSuggestByErrLog(err, stdBuffer.String(), stdErrBuff.String())
+	}
+	return nil
+}
+
+func FixGoFile(path string) error {
+	moduleRoot, err := findNearestGoModRoot(path)
+	if err != nil {
+		return err
+	}
+
+	err = ensureLocalNxtUnitReplace(moduleRoot)
+	if err != nil {
+		return err
+	}
+
+	var stdBuffer, stdErrBuff bytes.Buffer
+	cmd := exec.Command(atgconstant.GoDirective, "mod", "tidy")
+	cmd.Dir = moduleRoot
+	cmd.Stdout = &stdBuffer
+	cmd.Stderr = &stdErrBuff
+	err = cmd.Run()
 	if err != nil {
 		return logextractor.GenSuggestByErrLog(err, stdBuffer.String(), stdErrBuff.String())
 	}
